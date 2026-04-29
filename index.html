@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parts Inventory</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+        body { background-color: #0f172a; color: #e2e8f0; font-family: 'Inter', sans-serif; }
+        .modal { animation: modalPop 0.3s ease-out; }
+        @keyframes modalPop { 0% { transform: scale(0.95); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+        .row-hover:hover { background-color: #1e2937; }
+        .card { background-color: #1e2937; }
+    </style>
+</head>
+<body class="min-h-screen">
+
+<div class="max-w-7xl mx-auto px-8 py-8">
+    <div class="flex justify-between items-start mb-8">
+        <div>
+            <h1 class="text-3xl font-semibold text-white">Parts Inventory</h1>
+            <p class="text-slate-400 mt-1">Shared • Real-time • Multi-user</p>
+        </div>
+        <button onclick="showAddItemModal()" 
+                class="flex items-center gap-x-2 bg-indigo-600 hover:bg-indigo-500 px-6 py-3 rounded-2xl font-medium">
+            <i class="fa-solid fa-plus"></i> Add Part
+        </button>
+    </div>
+
+    <!-- Stats -->
+    <div class="grid grid-cols-4 gap-6 mb-8">
+        <div class="card rounded-3xl p-6"><div class="text-slate-400 text-sm">Part types</div><div id="stat-items" class="text-4xl font-semibold text-white mt-2">0</div></div>
+        <div class="card rounded-3xl p-6"><div class="text-slate-400 text-sm">Total units</div><div id="stat-total-units" class="text-4xl font-semibold text-white mt-2">0</div></div>
+        <div class="card rounded-3xl p-6"><div class="text-slate-400 text-sm">Available</div><div id="stat-available" class="text-4xl font-semibold text-emerald-400 mt-2">0</div></div>
+        <div class="card rounded-3xl p-6"><div class="text-slate-400 text-sm">Checked out</div><div id="stat-checked-out" class="text-4xl font-semibold text-amber-400 mt-2">0</div></div>
+    </div>
+
+    <!-- Search -->
+    <div class="mb-6">
+        <input id="search-input" type="text" placeholder="Search by description, part #, serial #..." 
+               class="w-full bg-slate-800 border border-slate-700 focus:border-indigo-500 rounded-3xl px-6 py-4 text-white placeholder-slate-500 focus:outline-none"
+               onkeyup="filterInventory()">
+    </div>
+
+    <!-- Table -->
+    <div class="card rounded-3xl overflow-hidden">
+        <table class="w-full">
+            <thead>
+                <tr class="border-b border-slate-700 text-xs uppercase text-slate-400">
+                    <th class="text-left py-5 px-8 font-medium">Description</th>
+                    <th class="text-left py-5 px-8 font-medium">Part #</th>
+                    <th class="text-center py-5 px-8 font-medium">Qty</th>
+                    <th class="text-center py-5 px-8 font-medium">Checked out</th>
+                    <th class="text-center py-5 px-8 font-medium">Serials</th>
+                    <th class="w-40"></th>
+                </tr>
+            </thead>
+            <tbody id="inventory-table-body" class="text-sm"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- DETAIL MODAL -->
+<div id="detail-modal" onclick="if(event.target.id === 'detail-modal') hideDetailModal()" 
+     class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+    <div onclick="event.stopImmediatePropagation()" class="modal bg-slate-900 rounded-3xl w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col border border-slate-700">
+        <div class="px-8 py-6 border-b border-slate-700">
+            <input id="edit-description" class="block w-full bg-transparent text-2xl font-semibold text-white focus:outline-none border-b border-transparent focus:border-slate-600 pb-1" onchange="saveItemInfo()">
+            <input id="edit-part-number" class="block w-full bg-transparent text-slate-400 font-mono focus:outline-none border-b border-transparent focus:border-slate-600 mt-1" onchange="saveItemInfo()">
+        </div>
+        <div class="flex-1 overflow-auto p-8">
+            <h3 class="font-medium text-slate-300 mb-4">Units &amp; Status</h3>
+            <table class="w-full">
+                <thead>
+                    <tr class="text-xs text-slate-400 border-b border-slate-700">
+                        <th class="text-left py-3">Serial Number (click to edit)</th>
+                        <th class="text-center py-3">Status</th>
+                        <th class="text-left py-3">Checked Out By</th>
+                        <th class="text-left py-3">Checkout Date</th>
+                        <th class="text-left py-3">Expected Return</th>
+                        <th class="w-28"></th>
+                    </tr>
+                </thead>
+                <tbody id="detail-body" class="text-sm divide-y divide-slate-700"></tbody>
+            </table>
+        </div>
+        <div class="px-8 py-6 border-t border-slate-700 flex justify-between">
+            <button onclick="openCheckoutFromDetail()" class="bg-amber-600 hover:bg-amber-500 text-white px-6 py-3 rounded-2xl flex items-center gap-2">
+                <i class="fa-solid fa-arrow-right-from-bracket"></i> Checkout Units
+            </button>
+            <button onclick="addMissingSerial()" class="text-indigo-400 hover:text-indigo-300 flex items-center gap-2">
+                <i class="fa-solid fa-plus"></i> Add Serial
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- CHECKOUT MODAL -->
+<div id="checkout-modal" onclick="if(event.target.id === 'checkout-modal') hideCheckoutModal()" 
+     class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+    <div onclick="event.stopImmediatePropagation()" class="modal bg-slate-900 rounded-3xl w-full max-w-2xl mx-4 border border-slate-700">
+        <div class="px-8 py-6 border-b border-slate-700">
+            <h3 id="checkout-item-name" class="font-semibold text-xl text-white"></h3>
+            <p id="checkout-part-number" class="text-slate-400"></p>
+        </div>
+        <div class="p-8">
+            <div class="mb-4 text-sm text-slate-400">Select units to check out:</div>
+            <div id="serial-list" class="max-h-80 overflow-auto border border-slate-700 rounded-2xl p-3"></div>
+
+            <div class="grid grid-cols-2 gap-6 mt-8">
+                <div>
+                    <label class="block text-xs text-slate-400 mb-2">CHECKED OUT BY</label>
+                    <input id="checkout-name" type="text" class="w-full bg-slate-800 border border-slate-700 rounded-2xl px-5 py-4 text-white" placeholder="Your name">
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-400 mb-2">EXPECTED RETURN DATE</label>
+                    <input id="return-date" type="date" class="w-full bg-slate-800 border border-slate-700 rounded-2xl px-5 py-4 text-white">
+                </div>
+            </div>
+        </div>
+        <div class="px-8 py-6 border-t border-slate-700 flex justify-end gap-4">
+            <button onclick="hideCheckoutModal()" class="px-8 py-4 text-slate-400">Cancel</button>
+            <button onclick="confirmCheckout()" class="bg-amber-600 hover:bg-amber-500 px-8 py-4 rounded-2xl text-white">Confirm Checkout</button>
+        </div>
+    </div>
+</div>
+
+<!-- ADD ITEM MODAL -->
+<div id="add-modal" onclick="if(event.target.id === 'add-modal') hideAddItemModal()" 
+     class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+    <div onclick="event.stopImmediatePropagation()" class="modal bg-slate-900 rounded-3xl w-full max-w-lg mx-4 border border-slate-700">
+        <div class="px-8 py-6 border-b border-slate-700"><h3 class="font-semibold text-xl">Add New Part</h3></div>
+        <div class="p-8 space-y-6">
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">DESCRIPTION</label>
+                <input id="add-description" type="text" class="w-full bg-slate-800 border border-slate-700 rounded-2xl px-5 py-4 text-white" placeholder="e.g. 10G SFP+ SR Transceiver">
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">PART NUMBER</label>
+                <input id="add-part-number" type="text" class="w-full bg-slate-800 border border-slate-700 rounded-2xl px-5 py-4 text-white" placeholder="e.g. SFP-10G-SR">
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">INITIAL QUANTITY</label>
+                <input id="add-quantity" type="number" value="5" min="1" class="w-full bg-slate-800 border border-slate-700 rounded-2xl px-5 py-4 text-white">
+            </div>
+        </div>
+        <div class="px-8 py-6 border-t border-slate-700 flex justify-end gap-4">
+            <button onclick="hideAddItemModal()" class="px-8 py-4 text-slate-400">Cancel</button>
+            <button onclick="addNewItem()" class="bg-indigo-600 hover:bg-indigo-500 px-8 py-4 rounded-2xl text-white">Add Part</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ==================== YOUR FIREBASE CONFIG ====================
+    const firebaseConfig = {
+        apiKey: "AIzaSyC28Hkbcf2GuKCajqal_iq3YrMC0EsNNLE",
+        authDomain: "smc-inventory-tracker.firebaseapp.com",
+        projectId: "smc-inventory-tracker",
+        storageBucket: "smc-inventory-tracker.firebasestorage.app",
+        messagingSenderId: "693138965596",
+        appId: "1:693138965596:web:1db46a3ffacbd144719299"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const inventoryRef = db.collection("inventory");
+
+    let inventory = [];
+    let currentItemId = null;
+    let currentCheckoutItemId = null;
+    let currentSearchTerm = '';
+
+    function loadInventory() {
+        inventoryRef.onSnapshot(snapshot => {
+            inventory = [];
+            snapshot.forEach(doc => {
+                inventory.push({ id: doc.id, ...doc.data() });
+            });
+            renderInventoryTable();
+            updateStats();
+        });
+    }
+
+    function saveItem(item) {
+        if (item.id) {
+            inventoryRef.doc(item.id).set(item);
+        } else {
+            inventoryRef.add(item);
+        }
+    }
+
+    function getItemStats(item) {
+        const total = item.units.length;
+        const checkedOut = item.units.filter(u => u.checkout).length;
+        const withSerial = item.units.filter(u => u.serial && u.serial.trim() !== '').length;
+        return { total, checkedOut, available: total - checkedOut, withSerial };
+    }
+
+    function renderInventoryTable() {
+        const tbody = document.getElementById('inventory-table-body');
+        tbody.innerHTML = '';
+
+        const filtered = inventory.filter(item => {
+            if (!currentSearchTerm) return true;
+            const term = currentSearchTerm.toLowerCase();
+            return item.description.toLowerCase().includes(term) ||
+                   item.partNumber.toLowerCase().includes(term) ||
+                   item.units.some(u => u.serial && u.serial.toLowerCase().includes(term));
+        });
+
+        if (filtered.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center py-16 text-slate-500">No matching parts found.</td></tr>`;
+            updateStats();
+            return;
+        }
+
+        filtered.forEach(item => {
+            const stats = getItemStats(item);
+            const qtyColor = stats.checkedOut > 0 ? 'text-red-400' : 'text-emerald-400';
+
+            let serialHTML = '';
+            if (stats.withSerial === 0) serialHTML = `<span class="text-slate-500">—</span>`;
+            else if (stats.withSerial === stats.total) serialHTML = `<span class="text-emerald-400">✓ ${stats.withSerial}/${stats.total}</span>`;
+            else serialHTML = `<span class="text-amber-400">⚠ ${stats.withSerial}/${stats.total}</span>`;
+
+            const row = document.createElement('tr');
+            row.className = 'row-hover border-b border-slate-700 cursor-pointer';
+            row.innerHTML = `
+                <td class="py-6 px-8 font-medium">${item.description}</td>
+                <td class="py-6 px-8 font-mono text-slate-400">${item.partNumber}</td>
+                <td class="py-6 px-8 text-center"><span class="${qtyColor} font-semibold">${stats.available}/${stats.total}</span></td>
+                <td class="py-6 px-8 text-center text-blue-400 font-medium">${stats.checkedOut > 0 ? stats.checkedOut : `<span class="text-slate-500">—</span>`}</td>
+                <td class="py-6 px-8 text-center">${serialHTML}</td>
+                <td class="py-6 px-8">
+                    <button onclick="openCheckoutModal('${item.id}'); event.stopImmediatePropagation()" class="bg-slate-700 hover:bg-slate-600 px-6 py-2.5 rounded-2xl text-sm">Checkout</button>
+                </td>
+            `;
+            row.addEventListener('click', (e) => {
+                if (!e.target.closest('button')) showDetailModal(item.id);
+            });
+            tbody.appendChild(row);
+        });
+
+        updateStats();
+    }
+
+    function updateStats() {
+        let totalItems = inventory.length, totalUnits = 0, available = 0, checkedOut = 0;
+        inventory.forEach(item => {
+            const s = getItemStats(item);
+            totalUnits += s.total;
+            available += s.available;
+            checkedOut += s.checkedOut;
+        });
+        document.getElementById('stat-items').textContent = totalItems;
+        document.getElementById('stat-total-units').textContent = totalUnits;
+        document.getElementById('stat-available').textContent = available;
+        document.getElementById('stat-checked-out').textContent = checkedOut;
+    }
+
+    function showDetailModal(id) {
+        currentItemId = id;
+        const item = inventory.find(i => i.id === id);
+        if (!item) return;
+
+        document.getElementById('edit-description').value = item.description;
+        document.getElementById('edit-part-number').value = item.partNumber;
+
+        const tbody = document.getElementById('detail-body');
+        tbody.innerHTML = '';
+
+        item.units.forEach((unit, index) => {
+            const checked = !!unit.checkout;
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td class="py-5 px-4">
+                    <input type="text" value="${unit.serial || ''}" 
+                           class="bg-slate-800 border border-slate-700 focus:border-indigo-500 w-full rounded-xl px-4 py-2 text-sm font-mono"
+                           placeholder="Enter serial number"
+                           onchange="updateSerial('${id}', ${index}, this.value)">
+                </td>
+                <td class="py-5 px-4 text-center">
+                    ${checked ? `<span class="px-4 py-1 bg-amber-900 text-amber-300 text-xs rounded-2xl">CHECKED OUT</span>` : `<span class="px-4 py-1 bg-emerald-900 text-emerald-300 text-xs rounded-2xl">AVAILABLE</span>`}
+                </td>
+                <td class="py-5 px-4">${checked ? unit.checkout.name : '—'}</td>
+                <td class="py-5 px-4">${checked ? unit.checkout.date : '—'}</td>
+                <td class="py-5 px-4">${checked && unit.checkout.returnDate ? unit.checkout.returnDate : '—'}</td>
+                <td class="py-5 px-4">
+                    ${checked ? `<button onclick="checkinUnit('${id}', ${index});event.stopImmediatePropagation()" class="text-emerald-400 text-sm">Return</button>` : ''}
+                    <button onclick="deleteUnit('${id}', ${index});event.stopImmediatePropagation()" class="ml-4 text-red-400 hover:text-red-300"><i class="fa-solid fa-trash"></i></button>
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        document.getElementById('detail-modal').classList.remove('hidden');
+        document.getElementById('detail-modal').classList.add('flex');
+    }
+
+    function hideDetailModal() {
+        document.getElementById('detail-modal').classList.add('hidden');
+        document.getElementById('detail-modal').classList.remove('flex');
+    }
+
+    function saveItemInfo() {
+        const item = inventory.find(i => i.id === currentItemId);
+        if (!item) return;
+        item.description = document.getElementById('edit-description').value.trim();
+        item.partNumber = document.getElementById('edit-part-number').value.trim();
+        saveItem(item);
+        renderInventoryTable();
+    }
+
+    function updateSerial(itemId, index, value) {
+        const item = inventory.find(i => i.id === itemId);
+        if (item) item.units[index].serial = value.trim();
+        saveItem(item);
+        renderInventoryTable();
+    }
+
+    function deleteUnit(itemId, index) {
+        if (!confirm("Delete this unit?")) return;
+        const item = inventory.find(i => i.id === itemId);
+        if (item) {
+            item.units.splice(index, 1);
+            saveItem(item);
+            showDetailModal(itemId);
+            renderInventoryTable();
+        }
+    }
+
+    function checkinUnit(itemId, index) {
+        if (!confirm("Return this unit?")) return;
+        const item = inventory.find(i => i.id === itemId);
+        if (item) {
+            item.units[index].checkout = null;
+            saveItem(item);
+            showDetailModal(itemId);
+            renderInventoryTable();
+        }
+    }
+
+    function addMissingSerial() {
+        const item = inventory.find(i => i.id === currentItemId);
+        if (!item) return;
+        item.units.push({ serial: "", checkout: null });
+        saveItem(item);
+        showDetailModal(currentItemId);
+        renderInventoryTable();
+    }
+
+    function openCheckoutModal(itemId) {
+        currentCheckoutItemId = itemId;
+        const item = inventory.find(i => i.id === itemId);
+        document.getElementById('checkout-item-name').textContent = item.description;
+        document.getElementById('checkout-part-number').innerHTML = `Part #: <span class="font-mono">${item.partNumber}</span>`;
+
+        const container = document.getElementById('serial-list');
+        container.innerHTML = '';
+
+        item.units.forEach((unit, i) => {
+            if (unit.checkout || !unit.serial || unit.serial.trim() === '') return;
+            const div = document.createElement('div');
+            div.className = "flex items-center gap-3 p-3 hover:bg-slate-800 rounded-xl";
+            div.innerHTML = `<input type="checkbox" id="s${i}" class="w-5 h-5 accent-amber-500"><label for="s${i}" class="font-mono cursor-pointer">${unit.serial}</label>`;
+            container.appendChild(div);
+        });
+
+        if (container.children.length === 0) {
+            container.innerHTML = `<p class="text-slate-500 py-8 text-center">No units with serial numbers available.</p>`;
+        }
+
+        document.getElementById('checkout-modal').classList.remove('hidden');
+        document.getElementById('checkout-modal').classList.add('flex');
+    }
+
+    function openCheckoutFromDetail() {
+        hideDetailModal();
+        setTimeout(() => openCheckoutModal(currentItemId), 300);
+    }
+
+    function hideCheckoutModal() {
+        document.getElementById('checkout-modal').classList.add('hidden');
+        document.getElementById('checkout-modal').classList.remove('flex');
+    }
+
+    function confirmCheckout() {
+        const item = inventory.find(i => i.id === currentCheckoutItemId);
+        const name = document.getElementById('checkout-name').value.trim();
+        if (!name) return alert("Enter name");
+
+        const returnDate = document.getElementById('return-date').value;
+        let count = 0;
+
+        item.units.forEach((unit, i) => {
+            const cb = document.getElementById(`s${i}`);
+            if (cb && cb.checked) {
+                unit.checkout = { name, date: new Date().toISOString().split('T')[0], returnDate: returnDate || null };
+                count++;
+            }
+        });
+
+        if (count === 0) return alert("Select at least one unit");
+        saveItem(item);
+        hideCheckoutModal();
+        renderInventoryTable();
+        if (currentItemId) showDetailModal(currentItemId);
+    }
+
+    function showAddItemModal() {
+        document.getElementById('add-modal').classList.remove('hidden');
+        document.getElementById('add-modal').classList.add('flex');
+    }
+
+    function hideAddItemModal() {
+        document.getElementById('add-modal').classList.add('hidden');
+        document.getElementById('add-modal').classList.remove('flex');
+    }
+
+    function addNewItem() {
+        const desc = document.getElementById('add-description').value.trim();
+        const part = document.getElementById('add-part-number').value.trim();
+        const qty = parseInt(document.getElementById('add-quantity').value) || 1;
+
+        if (!desc || !part) return alert("Fill description and part number");
+
+        const units = [];
+        for (let i = 1; i <= qty; i++) {
+            units.push({ serial: "", checkout: null });
+        }
+
+        const newItem = { description: desc, partNumber: part, units: units };
+        saveItem(newItem);
+        hideAddItemModal();
+    }
+
+    function filterInventory() {
+        currentSearchTerm = document.getElementById('search-input').value;
+        renderInventoryTable();
+    }
+
+    window.onload = loadInventory;
+</script>
+</body>
+</html>

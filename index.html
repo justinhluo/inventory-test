@@ -56,7 +56,7 @@
                     <th class="text-center py-5 px-8 font-medium">Qty</th>
                     <th class="text-center py-5 px-8 font-medium">Checked out</th>
                     <th class="text-center py-5 px-8 font-medium">Serials</th>
-                    <th class="w-40"></th>
+                    <th class="w-48"></th>
                 </tr>
             </thead>
             <tbody id="inventory-table-body" class="text-sm"></tbody>
@@ -156,7 +156,6 @@
 </div>
 
 <script>
-    // ==================== YOUR FIREBASE CONFIG ====================
     const firebaseConfig = {
         apiKey: "AIzaSyC28Hkbcf2GuKCajqal_iq3YrMC0EsNNLE",
         authDomain: "smc-inventory-tracker.firebaseapp.com",
@@ -178,9 +177,7 @@
     function loadInventory() {
         inventoryRef.onSnapshot(snapshot => {
             inventory = [];
-            snapshot.forEach(doc => {
-                inventory.push({ id: doc.id, ...doc.data() });
-            });
+            snapshot.forEach(doc => inventory.push({ id: doc.id, ...doc.data() }));
             renderInventoryTable();
             updateStats();
         });
@@ -192,6 +189,14 @@
         } else {
             inventoryRef.add(item);
         }
+    }
+
+    function deleteWholeItem(itemId) {
+        if (!confirm("Delete this entire part and all its units? This cannot be undone.")) return;
+        
+        inventoryRef.doc(itemId).delete().then(() => {
+            if (currentItemId === itemId) hideDetailModal();
+        });
     }
 
     function getItemStats(item) {
@@ -236,8 +241,13 @@
                 <td class="py-6 px-8 text-center"><span class="${qtyColor} font-semibold">${stats.available}/${stats.total}</span></td>
                 <td class="py-6 px-8 text-center text-blue-400 font-medium">${stats.checkedOut > 0 ? stats.checkedOut : `<span class="text-slate-500">—</span>`}</td>
                 <td class="py-6 px-8 text-center">${serialHTML}</td>
-                <td class="py-6 px-8">
-                    <button onclick="openCheckoutModal('${item.id}'); event.stopImmediatePropagation()" class="bg-slate-700 hover:bg-slate-600 px-6 py-2.5 rounded-2xl text-sm">Checkout</button>
+                <td class="py-6 px-8 flex gap-3">
+                    <button onclick="openCheckoutModal('${item.id}'); event.stopImmediatePropagation()" 
+                            class="bg-slate-700 hover:bg-slate-600 px-6 py-2.5 rounded-2xl text-sm">Checkout</button>
+                    <button onclick="deleteWholeItem('${item.id}'); event.stopImmediatePropagation()" 
+                            class="text-red-400 hover:text-red-500 px-3 py-2.5">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
                 </td>
             `;
             row.addEventListener('click', (e) => {
@@ -263,6 +273,7 @@
         document.getElementById('stat-checked-out').textContent = checkedOut;
     }
 
+    // === All other functions (showDetailModal, saveItemInfo, checkout, etc.) ===
     function showDetailModal(id) {
         currentItemId = id;
         const item = inventory.find(i => i.id === id);
